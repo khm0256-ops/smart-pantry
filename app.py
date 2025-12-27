@@ -275,5 +275,6 @@ def barcode_lookup():
     return jsonify({"ok": True, "code": code, "name_en": name_en, "name_ar": name_ar})
 
 if __name__ == '__main__':
+    port = int(os.getenv('PORT', 5000))
     print("⚠️  استخدم ملف run.py لتشغيل التطبيق")
-    app.run(host='0.0.0.0', debug=True, port=5002)
+    app.run(host='0.0.0.0', debug=False, port=port)

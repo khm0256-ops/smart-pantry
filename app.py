@@ -5,9 +5,28 @@ import os
 import sys
 import secrets
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 
 app = Flask(__name__)
 app.secret_key = os.getenv('APP_SECRET_KEY', 'dev-secret-change-me')  # مهم للـ flash messages
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+class User(UserMixin):
+    def __init__(self, id, username):
+        self.id = id
+        self.username = username
+
+@login_manager.user_loader
+def load_user(user_id):
+    conn = get_db_connection()
+    user = conn.execute('SELECT * FROM users WHERE id = ?', (user_id,)).fetchone()
+    conn.close()
+    if user:
+        return User(id=user['id'], username=user['username'])
+    return None
 
 def get_resource_path(relative_path):
     """الحصول على المسار الصحيح للملفات"""
@@ -43,8 +62,7 @@ def init_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
+            username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
@@ -52,7 +70,11 @@ def init_db():
     conn.commit()
     conn.close()
 
+# تهيئة قاعدة البيانات عند بدء التطبيق
+init_db()
+
 @app.route('/')
+@login_required
 def index():
     """الصفحة الرئيسية"""
     init_db()
@@ -110,10 +132,12 @@ def inject_csrf():
     return {'csrf_token': _ensure_csrf_token()}
 
 @app.route('/page2')
+@login_required
 def page2():
     return render_template('page2.html')
 
 @app.route('/add', methods=['POST'])
+@login_required
 def add_item():
     """إضافة صنف جديد"""
     try:
@@ -148,6 +172,7 @@ def add_item():
     return redirect(url_for('index'))
 
 @app.route('/update/<int:id>/<action>', methods=['POST'])
+@login_required
 def update_qty(id, action):
     """تحديث الكمية (زيادة أو نقصان)"""
     try:
@@ -169,6 +194,7 @@ def update_qty(id, action):
     return redirect(url_for('index'))
 
 @app.route('/delete/<int:id>', methods=['POST'])
+@login_required
 def delete_item(id):
     """حذف صنف"""
     try:
@@ -190,6 +216,7 @@ def delete_item(id):
     return redirect(url_for('index'))
 
 @app.route('/clear_all', methods=['POST'])
+@login_required
 def clear_all():
     """حذف جميع الأصناف (للتجربة)"""
     try:
@@ -207,34 +234,73 @@ def clear_all():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     """تسجيل مستخدم جديد"""
+    init_db()  # تأكد من إنشاء الجداول
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
-        email = request.form.get('email', '').strip().lower()
         password = request.form.get('password', '')
 
-        if not username or not email or not password:
+        if not username or not password:
             flash('يرجى ملء جميع الحقول', 'danger')
             return redirect(url_for('register'))
 
         try:
             conn = get_db_connection()
-            existing = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+            existing = conn.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
             if existing:
-                flash('هذا البريد مستخدم مسبقًا', 'danger')
+                flash('اسم المستخدم مستخدم مسبقًا', 'danger')
                 conn.close()
                 return redirect(url_for('register'))
 
             pwd_hash = generate_password_hash(password)
-            conn.execute('INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)', (username, email, pwd_hash))
+            conn.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, pwd_hash))
             conn.commit()
             conn.close()
             flash('تم إنشاء الحساب بنجاح. يمكنك الآن تسجيل الدخول.', 'success')
-            return redirect(url_for('index'))
+            return redirect(url_for('login'))
         except Exception as e:
             flash(f'خطأ في التسجيل: {str(e)}', 'danger')
             return redirect(url_for('register'))
 
     return render_template('register.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """تسجيل الدخول"""
+    init_db()  # تأكد من إنشاء الجداول
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+
+        if not username or not password:
+            flash('يرجى ملء جميع الحقول', 'danger')
+            return redirect(url_for('login'))
+
+        try:
+            conn = get_db_connection()
+            user = conn.execute('SELECT * FROM users WHERE username = ?', (username,)).fetchone()
+            conn.close()
+            
+            if user and check_password_hash(user['password_hash'], password):
+                user_obj = User(id=user['id'], username=user['username'])
+                login_user(user_obj)
+                flash('تم تسجيل الدخول بنجاح', 'success')
+                return redirect(url_for('index'))
+            else:
+                flash('اسم المستخدم أو كلمة المرور غير صحيحة', 'danger')
+        except Exception as e:
+            flash(f'خطأ في تسجيل الدخول: {str(e)}', 'danger')
+    
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('تم تسجيل الخروج', 'info')
+    return redirect(url_for('login'))
 
 @app.errorhandler(404)
 def page_not_found(e):
@@ -251,6 +317,7 @@ def health():
     return jsonify({"ok": True}), 200
 
 @app.route('/barcode/lookup')
+@login_required
 def barcode_lookup():
     code = request.args.get('code', '').strip()
     if not code:

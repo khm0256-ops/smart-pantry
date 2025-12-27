@@ -21,6 +21,13 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 if __name__ == '__main__':
+    # طباعة مسار قاعدة البيانات
+    import os
+    db_path = os.path.join(os.path.expanduser('~'), 'smart_pantry.db')
+    print(f"📁 مسار قاعدة البيانات: {db_path}")
+    print("💾 البيانات محفوظة بشكل دائم في هذا الملف")
+    print("")
+    
     # طباعة رسالة ترحيبية
     print("=" * 60)
     print("🏠 تطبيق بيتي الذكي - Smart Home App")

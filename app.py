@@ -40,6 +40,7 @@ def get_db_connection():
     """الاتصال بقاعدة البيانات"""
     # حفظ قاعدة البيانات في مجلد المستخدم لضمان الكتابة
     db_path = os.path.join(os.path.expanduser('~'), 'smart_pantry.db')
+    print(f"📁 مسار قاعدة البيانات: {db_path}")  # طباعة المسار للتأكد
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -68,6 +69,10 @@ def init_db():
         )
     """)
     conn.commit()
+    # طباعة عدد الأصناف الحالية
+    items_count = conn.execute('SELECT COUNT(*) FROM items').fetchone()[0]
+    users_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
+    print(f"📊 عدد الأصناف: {items_count}, عدد المستخدمين: {users_count}")
     conn.close()
 
 # تهيئة قاعدة البيانات عند بدء التطبيق

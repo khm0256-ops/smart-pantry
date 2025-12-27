@@ -1,11 +1,13 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, abort
 import sqlite3
 from datetime import datetime
 import os
 import sys
+import secrets
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
-app.secret_key = 'your-secret-key-here-change-it'  # مهم للـ flash messages
+app.secret_key = os.getenv('APP_SECRET_KEY', 'dev-secret-change-me')  # مهم للـ flash messages
 
 def get_resource_path(relative_path):
     """الحصول على المسار الصحيح للملفات"""
@@ -34,6 +36,16 @@ def init_db():
             quantity INTEGER NOT NULL DEFAULT 1,
             min_quantity INTEGER DEFAULT 2,
             expiry_date TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # users table for authentication
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -80,6 +92,27 @@ def index():
             shopping_list.append(item_obj)
     return render_template('index.html', inventory=inventory, shopping_list=shopping_list)
 
+def _ensure_csrf_token():
+    if 'csrf_token' not in session:
+        session['csrf_token'] = secrets.token_hex(16)
+    return session['csrf_token']
+
+@app.before_request
+def csrf_protect():
+    if request.method == 'POST':
+        token = session.get('csrf_token')
+        form_token = request.form.get('csrf_token')
+        if not token or token != form_token:
+            abort(400)
+
+@app.context_processor
+def inject_csrf():
+    return {'csrf_token': _ensure_csrf_token()}
+
+@app.route('/page2')
+def page2():
+    return render_template('page2.html')
+
 @app.route('/add', methods=['POST'])
 def add_item():
     """إضافة صنف جديد"""
@@ -114,7 +147,7 @@ def add_item():
     
     return redirect(url_for('index'))
 
-@app.route('/update/<int:id>/<action>')
+@app.route('/update/<int:id>/<action>', methods=['POST'])
 def update_qty(id, action):
     """تحديث الكمية (زيادة أو نقصان)"""
     try:
@@ -135,7 +168,7 @@ def update_qty(id, action):
     
     return redirect(url_for('index'))
 
-@app.route('/delete/<int:id>')
+@app.route('/delete/<int:id>', methods=['POST'])
 def delete_item(id):
     """حذف صنف"""
     try:
@@ -156,7 +189,7 @@ def delete_item(id):
     
     return redirect(url_for('index'))
 
-@app.route('/clear_all')
+@app.route('/clear_all', methods=['POST'])
 def clear_all():
     """حذف جميع الأصناف (للتجربة)"""
     try:
@@ -169,6 +202,39 @@ def clear_all():
         flash(f'❌ خطأ: {str(e)}', 'danger')
     
     return redirect(url_for('index'))
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """تسجيل مستخدم جديد"""
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+
+        if not username or not email or not password:
+            flash('يرجى ملء جميع الحقول', 'danger')
+            return redirect(url_for('register'))
+
+        try:
+            conn = get_db_connection()
+            existing = conn.execute('SELECT id FROM users WHERE email = ?', (email,)).fetchone()
+            if existing:
+                flash('هذا البريد مستخدم مسبقًا', 'danger')
+                conn.close()
+                return redirect(url_for('register'))
+
+            pwd_hash = generate_password_hash(password)
+            conn.execute('INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)', (username, email, pwd_hash))
+            conn.commit()
+            conn.close()
+            flash('تم إنشاء الحساب بنجاح. يمكنك الآن تسجيل الدخول.', 'success')
+            return redirect(url_for('index'))
+        except Exception as e:
+            flash(f'خطأ في التسجيل: {str(e)}', 'danger')
+            return redirect(url_for('register'))
+
+    return render_template('register.html')
 
 @app.errorhandler(404)
 def page_not_found(e):
@@ -210,4 +276,4 @@ def barcode_lookup():
 
 if __name__ == '__main__':
     print("⚠️  استخدم ملف run.py لتشغيل التطبيق")
-    app.run(debug=True, port=5002)
+    app.run(host='0.0.0.0', debug=True, port=5002)
